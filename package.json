@@ -1,0 +1,15 @@
+{
+  "name": "postscollections",
+  "version": "1.0.4",
+  "author": "Kaspars Bulins",
+  "description": "Wordpress plugin posts collections",
+  "devDependencies": {
+    "grunt": "~0.4.2",
+    "grunt-contrib-cssmin": "*",
+    "grunt-contrib-concat": "~0.3.0",
+    "grunt-contrib-uglify": "*",
+    "grunt-contrib-copy": "*",
+    "grunt-contrib-watch": "*",
+    "matchdep": "*"
+  }
+}
