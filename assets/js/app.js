@@ -1,5 +1,7 @@
-;jQuery(function($){
-    var $list = $('ol.postscollections__posts');
+var $ = jQuery;
+var $list;
+
+function initList() {
     $list.sortable({
         update: function() {
 
@@ -17,7 +19,9 @@
             })
         }
     });
+}
 
+function setEvents() {
     $list.on('click', '.postscollections__remove', function(ev){
         ev.preventDefault();
 
@@ -33,5 +37,11 @@
         });
         
     });
-    
+}
+
+jQuery(function(){
+    $list = $('ol.postscollections__posts');
+
+    initList();
+    setEvents();
 });

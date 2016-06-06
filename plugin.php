@@ -4,11 +4,9 @@ namespace PostsCollections;
 
 class Plugin extends Base {
 
-    public $allowed_post_types = ['post'];
+    public $allowed_post_types = [];
 
-    private $collections = [
-        'fronttop' => 'Sākumlapa: TOP'
-    ];
+    private $collections = [];
 
     private $table = '';
 
@@ -51,8 +49,8 @@ class Plugin extends Base {
     }
 
     public function scripts_styles() {
-        wp_register_style('postscollections-main', plugins_url( 'assets/main.css' , __FILE__ ), [], '1.8');
-        wp_register_script('postscollections-main', plugins_url( 'assets/main.js', __FILE__ ), ['jquery', 'jquery-ui-sortable'], '1.8');
+        wp_register_style('postscollections-main', plugins_url( 'build/app.min-'.$this->package('version').'.css' , __FILE__ ));
+        wp_register_script('postscollections-main', plugins_url( 'build/app.min-'.$this->package('version').'.js', __FILE__ ), ['jquery', 'jquery-ui-sortable']);
 
         wp_localize_script('postscollections-main', 'postscollections', ['ajax_url' => admin_url( 'admin-ajax.php' )]);
     }
@@ -73,9 +71,9 @@ class Plugin extends Base {
         );
     }
 
-    public function save_post( $post_id ) {
+    public function save_post($post_id) {
         // Check post type
-        if ($this->is_allowed_post_type()) {
+        //if ($this->is_allowed_post_type()) {
             
             if (!$this->verify_nonce_metbox('postscollections')) {
                 return $post_id;
@@ -93,7 +91,7 @@ class Plugin extends Base {
             
             $this->update_post_collections($post_id, $collections);
             $this->update_post_meta_collections($post_id);
-        }
+        //}
     }
 
     public function delete_post($id) {
@@ -101,7 +99,7 @@ class Plugin extends Base {
     }
 
     public function add_metabox() {
-        foreach ($this->allowed_post_types as $post_type) {
+        foreach ($this->get_allowed_post_types() as $post_type) {
             add_meta_box(
                 'postcollection',
                 __( 'Post collection', 'postscollections' ),
@@ -112,7 +110,7 @@ class Plugin extends Base {
         }
     }
 
-    public function metabox( $post ) {
+    public function metabox($post) {
         $this->nonce_field_metabox('postscollections');
         
         if (!is_string($c = get_post_meta($post->ID, '_postcollections', true))) {
@@ -120,7 +118,10 @@ class Plugin extends Base {
         }
         $collections = explode(',', $c);
 
-        foreach ($this->collections as $id => $caption) {
+        foreach ($this->get_collections($post->post_type) as $collection) {
+            $id = $collection['id'];
+            $caption = $collection['caption'];
+            $post_type = $collection['post_types'];
             $this->collection_item_html($id, $caption, in_array($id, $collections));
         }
     }
@@ -136,8 +137,10 @@ class Plugin extends Base {
     }
 
     public function page_postscollections() {
+        $collections = $this->get_collections();
+
         $current_collection_id = filter_input(INPUT_GET, 'collection', FILTER_SANITIZE_STRING);
-        $current_collection_id = $current_collection_id ? $current_collection_id : array_keys($this->collections)[0];
+        $current_collection_id = $current_collection_id ? $current_collection_id : $collections[0]['id'];
 
         $stats = $this->get_collections_stats();
 
@@ -151,13 +154,18 @@ class Plugin extends Base {
 
                 <div class="postscollections__collections">
                     <ul class="subsubsub">
-                        <?php $first = true; foreach ( $this->collections as $key => $value ): ?>
+                        <?php 
+                        $first = true;
+                        foreach ($collections as $collection):
+                            $id = $collection['id'];
+                            $caption = $collection['caption'];
+                            ?>
                             <li>
                                 <?php echo $first ? '' : '|' ?>
-                                <a <?php echo $current_collection_id == $key ? 'class="current"' : '' ?> href="admin.php?page=postscollections&amp;collection=<?php echo $key ?>">
-                                    <?php echo $value ?>
-                                    <?php if (array_key_exists($key, $stats)): ?>
-                                        <span class="count">(<?php echo $stats[$key] ?>)</span>
+                                <a <?php echo $current_collection_id == $id ? 'class="current"' : '' ?> href="admin.php?page=postscollections&amp;collection=<?php echo $id ?>">
+                                    <?php echo $caption ?>
+                                    <?php if (array_key_exists($id, $stats)): ?>
+                                        <span class="count">(<?php echo $stats[$id] ?>)</span>
                                     <?php endif ?>
                                 </a>
                             </li>
@@ -179,6 +187,29 @@ class Plugin extends Base {
             </div>
         </div>
         <?php
+    }
+
+    public function get_allowed_post_types() {
+        $r = apply_filters('wbpc_post_types', ['post']);
+        return $r;
+    }
+
+    public function get_collections($post_type=null) {
+        $collections = apply_filters('wbpc_collections', []);
+
+        $r = [];
+        if (is_null($post_type)) {
+            $r = $collections;
+        }
+        else {
+            foreach ($collections as $collection) {
+                if (in_array($post_type, $collection['post_types'])) {
+                    $r[] = $collection;
+                }
+            }
+        }
+
+        return $r;
     }
 
     public function update_post_collections($post_id, $collections) {
@@ -355,7 +386,7 @@ class Plugin extends Base {
 
         $q_post_types = implode(',', array_map(function($t) use($wpdb) {
             return $wpdb->prepare("%s", $t);
-        }, $this->allowed_post_types));
+        }, $this->get_allowed_post_types()));
 
         $wpdb->query("
             delete from $this->table
