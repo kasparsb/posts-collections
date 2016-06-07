@@ -429,9 +429,15 @@ class Plugin extends Base {
     public function clean_up_missing_posts() {
         global $wpdb;
 
+        $allowed_posts_types = $this->get_allowed_post_types();
+
+        if (count($allowed_posts_types) == 0) {
+            return;
+        }
+
         $q_post_types = implode(',', array_map(function($t) use($wpdb) {
             return $wpdb->prepare("%s", $t);
-        }, $this->get_allowed_post_types()));
+        }, $allowed_posts_types));
 
         $wpdb->query("
             delete from $this->table
