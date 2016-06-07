@@ -154,7 +154,9 @@ class Plugin extends Base {
         $collections = $this->get_collections();
 
         $current_collection_id = filter_input(INPUT_GET, 'collection', FILTER_SANITIZE_STRING);
-        $current_collection_id = $current_collection_id ? $current_collection_id : $collections[0]['id'];
+        if (count($collections) > 0) {
+            $current_collection_id = $current_collection_id ? $current_collection_id : $collections[0]['id'];
+        }
 
         $stats = $this->get_collections_stats();
 
@@ -205,7 +207,15 @@ class Plugin extends Base {
     }
 
     public function get_allowed_post_types() {
-        $r = apply_filters('wbpc_post_types', ['post']);
+        $collections = $this->get_collections();
+        $r = [];
+        
+        foreach ($collections as $collection) {
+            $r = array_merge($r, $collection['post_types']);
+        }
+        
+        $r = array_unique($r);
+
         return $r;
     }
 
