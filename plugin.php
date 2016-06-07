@@ -84,12 +84,26 @@ class Plugin extends Base {
                 return $post_id;
             }
 
-            $collections = filter_input(INPUT_POST, 'postcollections', FILTER_VALIDATE_BOOLEAN, ['flags' => FILTER_REQUIRE_ARRAY]);
-            $collections = is_array($collections) ? $collections : [];
-            $collections = array_keys(array_filter($collections));
+            $collections = $this->get_collections();
+
+            $post_collections = filter_input(INPUT_POST, 'postcollections', FILTER_VALIDATE_BOOLEAN, ['flags' => FILTER_REQUIRE_ARRAY]);
+            $post_collections = is_array($post_collections) ? $post_collections : [];
+            $post_collections = array_keys(array_filter($post_collections));
 
             
-            $this->update_post_collections($post_id, $collections);
+            $this->update_post_collections($post_id, $post_collections);
+            
+            foreach ($post_collections as $post_collection_id) {
+                foreach ($collections as $collection) {
+                    if ($collection['id'] == $post_collection_id) {
+                        if ($collection['max_posts'] > 0) {
+                            $this->check_collection_posts_limit($collection['id'], $collection['max_posts']);
+                        }
+                    }
+                }
+                
+            }
+
             $this->update_post_meta_collections($post_id);
         //}
     }
@@ -159,13 +173,14 @@ class Plugin extends Base {
                         foreach ($collections as $collection):
                             $id = $collection['id'];
                             $caption = $collection['caption'];
+                            $max_posts_html = $collection['max_posts'] > 0 ? $collection['max_posts'] : '&infin;';
                             ?>
                             <li>
                                 <?php echo $first ? '' : '|' ?>
                                 <a <?php echo $current_collection_id == $id ? 'class="current"' : '' ?> href="admin.php?page=postscollections&amp;collection=<?php echo $id ?>">
                                     <?php echo $caption ?>
                                     <?php if (array_key_exists($id, $stats)): ?>
-                                        <span class="count">(<?php echo $stats[$id] ?>)</span>
+                                        <span class="count">(<?php echo $stats[$id] ?> from <?php echo $max_posts_html ?>)</span>
                                     <?php endif ?>
                                 </a>
                             </li>
@@ -209,46 +224,12 @@ class Plugin extends Base {
             }
         }
 
+        // Check fields
+        foreach ($r as &$rr) {
+            $rr['max_posts'] = array_key_exists('max_posts', $rr) ? $rr['max_posts'] : -1;
+        }
+
         return $r;
-    }
-
-    public function update_post_collections($post_id, $collections) {
-        global $wpdb;
-
-        $current = $this->get_post_collections_with_order($post_id);
-        
-        // Merge esošās ar jaunajām. Saglabājam order esošajā kolekcijā
-        foreach ($collections as $id) {
-            // Saglabājam esošo order
-            if (array_key_exists($id, $current)) {
-                $order = $current[$id];
-            }
-            // Selektējam jauno order
-            else {
-                $q = $wpdb->prepare("
-                    SELECT max(`order`)+1 FROM $this->table WHERE collection=%s
-                ", $id);
-
-                $order = intval($wpdb->get_var($q));
-            }
-            
-            $new[] = [
-                'collection' => $id,
-                'order' => $order
-            ];
-        }
-
-        // Remove current and insert new
-        $d = $wpdb->prepare("
-            DELETE FROM $this->table WHERE post_id=%d
-        ", $post_id);
-
-        $wpdb->query($d);
-
-        foreach ($new as $w) {
-            $w['post_id'] = $post_id;
-            $wpdb->insert($this->table, $w);
-        }
     }
 
     /**
@@ -348,6 +329,46 @@ class Plugin extends Base {
         update_post_meta($post_id, '_postcollections', implode(',', $this->get_post_collections($post_id)));
     }
 
+    public function update_post_collections($post_id, $collections) {
+        global $wpdb;
+
+        $current = $this->get_post_collections_with_order($post_id);
+        $new = [];
+        
+        // Merge esošās ar jaunajām. Saglabājam order esošajā kolekcijā
+        foreach ($collections as $id) {
+            // Saglabājam esošo order
+            if (array_key_exists($id, $current)) {
+                $order = $current[$id];
+            }
+            // Selektējam jauno order
+            else {
+                $q = $wpdb->prepare("
+                    SELECT max(`order`)+1 FROM $this->table WHERE collection=%s
+                ", $id);
+
+                $order = intval($wpdb->get_var($q));
+            }
+            
+            $new[] = [
+                'collection' => $id,
+                'order' => $order
+            ];
+        }
+
+        // Remove current and insert new
+        $d = $wpdb->prepare("
+            DELETE FROM $this->table WHERE post_id=%d
+        ", $post_id);
+
+        $wpdb->query($d);
+
+        foreach ($new as $w) {
+            $w['post_id'] = $post_id;
+            $wpdb->insert($this->table, $w);
+        }
+    }
+
     public function remove_post_from_collection($post_id, $collection_id) {
         global $wpdb;
 
@@ -376,7 +397,21 @@ class Plugin extends Base {
                 '%d'
             ]
         );
-    }    
+    }
+
+    /**
+     * Handlojam, lai kolekcijā nebūtu vairāk postu par $limit
+     */
+    public function check_collection_posts_limit($collection_id, $limit) {
+        $posts = $this->get_collection_posts($collection_id);
+
+        $posts_to_remove = array_slice($posts, $limit);
+
+        foreach ($posts_to_remove as $post) {
+            $this->remove_post_from_collection($post->ID, $collection_id);
+            $this->update_post_meta_collections($post->ID);
+        }
+    }
 
     /**
      * Dzēšam postus, kuri vairs nav pieejami
@@ -438,6 +473,20 @@ class Plugin extends Base {
 
         if ($item['post_id'] > 0 && $item['collection'] != '') {
             $this->remove_post_from_collection($item['post_id'], $item['collection']);
+
+
+            $collections = $this->get_collections();
+            foreach ($collections as $collection) {
+                if ($collection['id'] == $item['collection']) {
+                    if ($collection['max_posts'] > 0) {
+                        $this->check_collection_posts_limit($collection['id'], $collection['max_posts']);
+                    }
+                }
+            }
+                
+            
+
+
             $this->update_post_meta_collections($item['post_id']);
         }
         
