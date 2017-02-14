@@ -40,7 +40,8 @@ class Plugin extends Base {
             collection VARCHAR(100) NOT NULL,
             post_id INT(11) NOT NULL,
             `order` INT(11) NOT NULL DEFAULT '0',
-            PRIMARY KEY (collection, post_id)
+            created_at DATETIME NULL,
+            PRIMARY KEY  (collection, post_id)
             )";
 
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
@@ -72,40 +73,36 @@ class Plugin extends Base {
     }
 
     public function save_post($post_id) {
-        // Check post type
-        //if ($this->is_allowed_post_type()) {
-            
-            if (!$this->verify_nonce_metbox('postscollections')) {
-                return $post_id;
-            }
-            
-            // If this is an autosave, our form has not been submitted, so we don't want to do anything.
-            if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
-                return $post_id;
-            }
+        if (!$this->verify_nonce_metbox('postscollections')) {
+            return $post_id;
+        }
+        
+        // If this is an autosave, our form has not been submitted, so we don't want to do anything.
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return $post_id;
+        }
 
-            $collections = $this->get_collections();
+        $collections = $this->get_collections();
 
-            $post_collections = filter_input(INPUT_POST, 'postcollections', FILTER_VALIDATE_BOOLEAN, ['flags' => FILTER_REQUIRE_ARRAY]);
-            $post_collections = is_array($post_collections) ? $post_collections : [];
-            $post_collections = array_keys(array_filter($post_collections));
+        $post_collections = filter_input(INPUT_POST, 'postcollections', FILTER_VALIDATE_BOOLEAN, ['flags' => FILTER_REQUIRE_ARRAY]);
+        $post_collections = is_array($post_collections) ? $post_collections : [];
+        $post_collections = array_keys(array_filter($post_collections));
 
-            
-            $this->update_post_collections($post_id, $post_collections);
-            
-            foreach ($post_collections as $post_collection_id) {
-                foreach ($collections as $collection) {
-                    if ($collection['id'] == $post_collection_id) {
-                        if ($collection['max_posts'] > 0) {
-                            $this->check_collection_posts_limit($collection['id'], $collection['max_posts']);
-                        }
+        
+        $this->update_post_collections($post_id, $post_collections);
+        
+        foreach ($post_collections as $post_collection_id) {
+            foreach ($collections as $collection) {
+                if ($collection['id'] == $post_collection_id) {
+                    if ($collection['max_posts'] > 0) {
+                        $this->check_collection_posts_limit($collection['id'], $collection['max_posts']);
                     }
                 }
-                
             }
+            
+        }
 
-            $this->update_post_meta_collections($post_id);
-        //}
+        $this->update_post_meta_collections($post_id);
     }
 
     public function delete_post($id) {
@@ -197,6 +194,11 @@ class Plugin extends Base {
                         <input type="hidden" name="collection" value="<?php echo $current_collection_id ?>" />
                         <a class="postscollections__remove">&times;</a>
                         <a class="postscollections__post"><?php echo $post->post_title ?></a>
+                        <?php if ($post->_collection_created_at): ?>
+                        <a class="postscollections__created_at">
+                            <?php echo human_time_diff(time(), strtotime($post->_collection_created_at)) ?>
+                        </a>
+                        <?php endif ?>
                         <a class="postscollections__edit" href="<?php echo get_edit_post_link($post->ID) ?>" target="_blank">Edit</a>
                     </li>
                     <?php endforeach ?>
@@ -249,7 +251,7 @@ class Plugin extends Base {
         global $wpdb;
 
         $q = $wpdb->prepare("
-            SELECT collection, `order` 
+            SELECT collection, `order`, created_at 
             FROM $this->table
             WHERE post_id=%d
             ORDER BY `order` ASC
@@ -276,6 +278,18 @@ class Plugin extends Base {
         return $r;
     }
 
+    public function get_post_collections_with_data($post_id) {
+        $r = [];
+        $items = $this->get_post_collection_rows($post_id);
+        foreach ($items as $item) {
+            $r[$item->collection] = [
+                'order' => $item->order,
+                'created_at' => $item->created_at
+            ];
+        }
+        return $r;
+    }
+
     public function get_collection_posts($collection_id, $count=0) {
         global $wpdb;
 
@@ -286,25 +300,32 @@ class Plugin extends Base {
             $limit = 'limit '.$count;
         }
 
-        $post_ids = $wpdb->get_col(
-            $wpdb->prepare("
-                select post_id 
-                from $this->table
-                where collection=%s
-                order by `order` desc
-                $limit
-            ", $collection_id),
-            0
-        );
+        $rows = $wpdb->get_results($wpdb->prepare("
+            select post_id, created_at 
+            from $this->table
+            where collection=%s
+            order by `order` desc
+            $limit
+        ", $collection_id));
+
+        $post_ids = [];
+        $created_at = [];
+        foreach ($rows as $row) {
+            $post_ids[] = $row->post_id;
+            $created_at[$row->post_id] = $row->created_at;
+        }
 
         $posts = [];
-
         if (count($post_ids) > 0) {
             $posts = get_posts([
                 'post_type' => 'any',
                 'include' => $post_ids,
                 'orderby' => 'post__in'
             ]);
+        }
+
+        foreach ($posts as &$post) {
+            $post->_collection_created_at = array_key_exists($post->ID, $created_at) ? $created_at[$post->ID] : '';
         }
         
         return $posts;
@@ -342,14 +363,15 @@ class Plugin extends Base {
     public function update_post_collections($post_id, $collections) {
         global $wpdb;
 
-        $current = $this->get_post_collections_with_order($post_id);
+        $current = $this->get_post_collections_with_data($post_id);
         $new = [];
         
         // Merge esošās ar jaunajām. Saglabājam order esošajā kolekcijā
         foreach ($collections as $id) {
             // Saglabājam esošo order
             if (array_key_exists($id, $current)) {
-                $order = $current[$id];
+                $order = $current[$id]['order'];
+                $created_at = $current[$id]['created_at'];
             }
             // Selektējam jauno order
             else {
@@ -358,11 +380,13 @@ class Plugin extends Base {
                 ", $id);
 
                 $order = intval($wpdb->get_var($q));
+                $created_at = current_time('mysql', 1);
             }
             
             $new[] = [
                 'collection' => $id,
-                'order' => $order
+                'order' => $order,
+                'created_at' => $created_at
             ];
         }
 
@@ -490,7 +514,6 @@ class Plugin extends Base {
         if ($item['post_id'] > 0 && $item['collection'] != '') {
             $this->remove_post_from_collection($item['post_id'], $item['collection']);
 
-
             $collections = $this->get_collections();
             foreach ($collections as $collection) {
                 if ($collection['id'] == $item['collection']) {
@@ -499,10 +522,7 @@ class Plugin extends Base {
                     }
                 }
             }
-                
             
-
-
             $this->update_post_meta_collections($item['post_id']);
         }
         

@@ -1,6 +1,6 @@
 {
   "name": "postscollections",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "Kaspars Bulins",
   "description": "Wordpress plugin posts collections",
   "devDependencies": {
